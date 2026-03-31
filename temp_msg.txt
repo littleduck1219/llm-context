@@ -1,0 +1,15 @@
+프론트엔드 컴포넌트들을 구현했습니다:
+
+**컴포넌트 구조:**
+- Sidebar.tsx: 프로젝트 목록, 새 프로젝트 생성 폼
+- ProjectList.tsx: 프로젝트 그리드 뷰
+- SessionView.tsx: 메시지 목록. 복사 기능. 요약 생성
+- MemoryPanel.tsx: 탭 인터페이스 (세션/메모리/결정사항/패턴)
+- SearchBar.tsx: 검색 입력. 결과 드롭다운
+
+**상태 관리:**
+- projects, selectedProject
+- sessions, selectedSession
+- activeView: 'projects' | 'sessions' | 'memory'
+
+모든 컴포넌트는 Lucide React 아이콘 사용.
