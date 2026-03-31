@@ -25,7 +25,18 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
 
-      const content = getProjectContent(project.gistId);
+      // Gist에서 최신 데이터 가져오기 시도
+      let content: string;
+      if (cfg.githubToken) {
+        try {
+          content = await syncProjectContent(project.gistId, cfg.githubToken);
+        } catch {
+          content = getProjectContent(project.gistId);
+        }
+      } else {
+        content = getProjectContent(project.gistId);
+      }
+
       const parsed = parseCloudContext(content);
       const session = parsed.sessions.find(s => s.date === id || s.title === id);
 
@@ -55,7 +66,18 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
 
-      const content = getProjectContent(project.gistId);
+      // Gist에서 최신 데이터 가져오기 시도
+      let content: string;
+      if (cfg.githubToken) {
+        try {
+          content = await syncProjectContent(project.gistId, cfg.githubToken);
+        } catch {
+          content = getProjectContent(project.gistId);
+        }
+      } else {
+        content = getProjectContent(project.gistId);
+      }
+
       const parsed = parseCloudContext(content);
 
       const sessions = parsed.sessions.map((s, index) => ({

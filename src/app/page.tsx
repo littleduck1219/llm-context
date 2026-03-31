@@ -118,7 +118,12 @@ export default function Home() {
         updatedAt: new Date(session.updatedAt),
         summary: session.summary,
         tags: session.tags || [],
-        metadata: session.metadata
+        metadata: session.metadata,
+        // CLI에서 저장한 데이터 포함
+        tasks: session.tasks || [],
+        codeChanges: session.codeChanges || [],
+        errors: session.errors || [],
+        decisions: session.decisions || []
       });
       setView('session');
     } catch (error) {

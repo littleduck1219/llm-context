@@ -241,11 +241,11 @@ program.command('save [projectPath] [title]')
         date: new Date().toISOString().split('T')[0],
         title: title || `개발 세션 ${parsed.sessions.length + 1}`,
         tasks: options.tasks || [],
-        codeChanges: (options.changes || []).map(c => {
+        codeChanges: (options.changes || []).map((c: string) => {
           const [file, ...rest] = c.split(':');
           return { file, change: rest.join(':') };
         }),
-        errors: (options.errors || []).map(e => {
+        errors: (options.errors || []).map((e: string) => {
           const [error, solution] = e.split('→');
           return { error, solution: solution || '' };
         }),
@@ -473,21 +473,19 @@ program.command('end [title]')
         date: new Date().toISOString().split('T')[0],
         title: sessionTitle,
         tasks: options.tasks || [],
-        codeChanges: (options.changes || []).map(c => {
+        codeChanges: (options.changes || []).map((c: string) => {
           const [file, ...rest] = c.split(':');
           return { file, change: rest.join(':') };
         }),
-        errors: (options.errors || []).map(e => {
+        errors: (options.errors || []).map((e: string) => {
           const [error, solution] = e.split('→');
           return { error, solution: solution || '' };
         }),
         decisions: options.decisions || []
       };
 
-      // 작업이 하나라도 있으면 저장
-      if (newSession.tasks?.length || newSession.codeChanges?.length || newSession.errors?.length || newSession.decisions?.length) {
-        parsed.sessions.push(newSession);
-      }
+      // 세션 저장 (빈 세션도 제목만으로 저장 가능)
+      parsed.sessions.push(newSession);
 
       const newContent = generateCloudMarkdown(project.name, parsed.sessions);
       await updateGist(cfg.githubToken, project.gistId, newContent);
@@ -502,6 +500,11 @@ program.command('end [title]')
       }
 
       console.log(`✅ 세션 저장 완료: ${sessionTitle}`);
+      // 작업 내용이 없으면 안내 메시지 추가
+      const hasContent = newSession.tasks?.length || newSession.codeChanges?.length || newSession.errors?.length || newSession.decisions?.length;
+      if (!hasContent) {
+        console.log(`💡 팁: 다음부터 -t "작업" -c "파일:변경" 옵션으로 상세 내용을 함께 저장하세요.`);
+      }
       console.log(`📊 총 ${parsed.sessions.length}개 세션`);
       console.log(`🔗 https://gist.github.com/${project.gistId}`);
     } catch (e) {

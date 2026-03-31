@@ -4,12 +4,28 @@ import {
   saveGistConfig,
   getProjects,
   createGist,
-  generateCloudMarkdown
+  generateCloudMarkdown,
+  syncProjectContent
 } from '@/lib/gist';
 
 // 프로젝트 목록 조회
 export async function GET(request: NextRequest) {
   try {
+    const cfg = loadGistConfig();
+
+    // 토큰이 있으면 모든 프로젝트 동기화
+    if (cfg.githubToken) {
+      for (const [projectPath, project] of Object.entries(cfg.projects)) {
+        try {
+          await syncProjectContent(project.gistId, cfg.githubToken);
+          cfg.projects[projectPath].lastSync = new Date().toISOString();
+        } catch {
+          // 동기화 실패해도 캐시 데이터 사용
+        }
+      }
+      saveGistConfig(cfg);
+    }
+
     const projects = getProjects();
     return NextResponse.json(projects);
   } catch (error) {

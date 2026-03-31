@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Session, Message, MessageAttachment, CodeChange, ErrorLog } from '@/types';
+import { Session, Message, MessageAttachment } from '@/types';
 import {
   ArrowLeft,
   User,
@@ -33,9 +33,13 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [attachments, setAttachments] = useState<Record<string, MessageAttachment[]>>({});
   const [expandedAttachments, setExpandedAttachments] = useState<Set<string>>(new Set());
-  const [codeChanges, setCodeChanges] = useState<CodeChange[]>([]);
-  const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
   const [activeTab, setActiveTab] = useState<'messages' | 'context' | 'code' | 'errors'>('context');
+
+  // session에서 직접 데이터 가져오기 (CLI에서 저장한 데이터)
+  const tasks = session.tasks || [];
+  const codeChanges = session.codeChanges || [];
+  const errors = session.errors || [];
+  const decisions = session.decisions || [];
 
   useEffect(() => {
     loadData();
@@ -43,20 +47,9 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
 
   const loadData = async () => {
     try {
-      const [messagesRes, changesRes, errorsRes] = await Promise.all([
-        fetch(`/api/messages?sessionId=${session.id}`),
-        fetch(`/api/code-changes?sessionId=${session.id}`),
-        fetch(`/api/error-logs?sessionId=${session.id}`)
-      ]);
-
+      const messagesRes = await fetch(`/api/messages?sessionId=${session.id}`);
       const messagesData = await messagesRes.json();
       setMessages(Array.isArray(messagesData) ? messagesData : []);
-
-      const changesData = await changesRes.json();
-      setCodeChanges(Array.isArray(changesData) ? changesData : []);
-
-      const errorsData = await errorsRes.json();
-      setErrorLogs(Array.isArray(errorsData) ? errorsData : []);
 
       // 첨부 파일 로드
       for (const msg of messagesData) {
@@ -135,14 +128,15 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
     });
   };
 
-  // 파일별로 코드 변경 그룹화
-  const groupedChanges = codeChanges.reduce((acc, change) => {
-    if (!acc[change.filepath]) {
-      acc[change.filepath] = [];
+  // 파일별로 코드 변경 그룹화 (CLI에서 저장한 데이터)
+  const groupedChanges = codeChanges.reduce((acc, change: any) => {
+    const filepath = change.file || change.filepath;
+    if (!acc[filepath]) {
+      acc[filepath] = [];
     }
-    acc[change.filepath].push(change);
+    acc[filepath].push(change);
     return acc;
-  }, {} as Record<string, CodeChange[]>);
+  }, {} as Record<string, any[]>);
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -206,9 +200,9 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
                 {codeChanges.length}
               </span>
             )}
-            {tab.id === 'errors' && errorLogs.length > 0 && (
+            {tab.id === 'errors' && errors.length > 0 && (
               <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs rounded-full">
-                {errorLogs.length}
+                {errors.length}
               </span>
             )}
           </button>
@@ -230,47 +224,62 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
             </div>
           )}
 
-          {/* 수정된 파일 */}
-          {Object.keys(groupedChanges).length > 0 && (
+          {/* 완료한 작업 (CLI에서 저장) */}
+          {tasks.length > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4">
               <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-blue-600" />
-                수정된 파일 ({Object.keys(groupedChanges).length}개)
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                완료한 작업 ({tasks.length}개)
               </h3>
               <ul className="space-y-2">
-                {Object.entries(groupedChanges).map(([filepath, changes]) => (
-                  <li key={filepath} className="flex items-center gap-2 text-sm">
-                    <span className={`w-2 h-2 rounded-full ${
-                      changes.some(c => c.changeType === 'created') ? 'bg-green-500' :
-                      changes.some(c => c.changeType === 'deleted') ? 'bg-red-500' : 'bg-yellow-500'
-                    }`} />
-                    <span className="text-slate-700 dark:text-slate-300">{filepath}</span>
-                    <span className="text-slate-400 text-xs">({changes.length}개 변경)</span>
+                {tasks.map((task, index) => (
+                  <li key={index} className="flex items-center gap-2 text-sm">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="text-slate-700 dark:text-slate-300">{task}</span>
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          {/* 해결된 에러 */}
-          {errorLogs.filter(e => e.solution).length > 0 && (
+          {/* 코드 변경 (CLI에서 저장) */}
+          {codeChanges.length > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4">
               <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                해결된 에러 ({errorLogs.filter(e => e.solution).length}개)
+                <FileCode className="w-5 h-5 text-blue-600" />
+                코드 변경 ({codeChanges.length}개)
+              </h3>
+              <ul className="space-y-2">
+                {codeChanges.map((change: any, index) => (
+                  <li key={index} className="border-l-2 border-blue-400 pl-3">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white">
+                      {change.file}
+                    </p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      {change.change}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 에러 & 해결 (CLI에서 저장) */}
+          {errors.length > 0 && (
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4">
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                에러 & 해결 ({errors.length}개)
               </h3>
               <ul className="space-y-3">
-                {errorLogs.filter(e => e.solution).map((error) => (
-                  <li key={error.id} className="border-l-2 border-green-500 pl-3">
+                {errors.map((error: any, index) => (
+                  <li key={index} className="border-l-2 border-green-500 pl-3">
                     <p className="text-sm font-medium text-red-600 dark:text-red-400">
-                      {error.errorMessage}
+                      {error.error}
                     </p>
-                    <p className="text-sm text-green-600 dark:text-green-400 mt-1">
-                      해결: {error.solution}
-                    </p>
-                    {error.relatedFile && (
-                      <p className="text-xs text-slate-500 mt-1">
-                        파일: {error.relatedFile}
+                    {error.solution && (
+                      <p className="text-sm text-green-600 dark:text-green-400 mt-1">
+                        해결: {error.solution}
                       </p>
                     )}
                   </li>
@@ -279,12 +288,33 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
             </div>
           )}
 
+          {/* 결정사항 (CLI에서 저장) */}
+          {decisions.length > 0 && (
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4">
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-purple-600" />
+                결정사항 ({decisions.length}개)
+              </h3>
+              <ul className="space-y-2">
+                {decisions.map((decision, index) => (
+                  <li key={index} className="flex items-center gap-2 text-sm">
+                    <span className="w-2 h-2 rounded-full bg-purple-500" />
+                    <span className="text-slate-700 dark:text-slate-300">{decision}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* 컨텍스트가 없는 경우 */}
-          {Object.keys(groupedChanges).length === 0 && errorLogs.length === 0 && !session.summary && (
+          {tasks.length === 0 && codeChanges.length === 0 && errors.length === 0 && decisions.length === 0 && !session.summary && (
             <div className="text-center py-12 text-slate-500">
               <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>아직 개발 컨텍스트가 없습니다.</p>
-              <p className="text-sm mt-2">코드 변경사항이나 에러 해결 이력이 기록되면 여기에 표시됩니다.</p>
+              <p className="text-sm mt-2">CLI에서 다음과 같이 작업 내용을 저장하세요:</p>
+              <code className="block mt-2 p-2 bg-slate-100 dark:bg-slate-700 rounded text-xs">
+                llm-context end "제목" -t "작업1" -c "파일:변경"
+              </code>
             </div>
           )}
         </div>
@@ -410,36 +440,17 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
             Object.entries(groupedChanges).map(([filepath, changes]) => (
               <div key={filepath} className="bg-white dark:bg-slate-800 rounded-lg shadow">
                 <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileCode className="w-5 h-5 text-blue-600" />
-                      <h3 className="font-medium text-slate-900 dark:text-white">{filepath}</h3>
-                    </div>
-                    <span className={`px-2 py-1 text-xs rounded ${
-                      changes.some(c => c.changeType === 'created') ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
-                      changes.some(c => c.changeType === 'deleted') ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
-                      'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
-                    }`}>
-                      {changes[0].changeType === 'created' ? '생성' :
-                       changes[0].changeType === 'deleted' ? '삭제' : '수정'}
-                    </span>
+                  <div className="flex items-center gap-2">
+                    <FileCode className="w-5 h-5 text-blue-600" />
+                    <h3 className="font-medium text-slate-900 dark:text-white">{filepath}</h3>
+                    <span className="text-xs text-slate-500">({(changes as any[]).length}개 변경)</span>
                   </div>
                 </div>
-                <div className="p-4 space-y-4">
-                  {changes.map((change) => (
-                    <div key={change.id} className="border-l-2 border-blue-300 pl-3">
-                      {change.description && (
-                        <p className="text-sm text-slate-600 dark:text-slate-400 mb-2">
-                          {change.description}
-                        </p>
-                      )}
-                      {change.afterCode && (
-                        <pre className="p-3 bg-slate-900 text-slate-100 rounded text-xs overflow-auto">
-                          <code>{change.afterCode}</code>
-                        </pre>
-                      )}
-                      <p className="text-xs text-slate-500 mt-2">
-                        {new Date(change.createdAt).toLocaleString()}
+                <div className="p-4 space-y-2">
+                  {(changes as any[]).map((change: any, index) => (
+                    <div key={index} className="border-l-2 border-blue-300 pl-3">
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        {change.change || change.description}
                       </p>
                     </div>
                   ))}
@@ -453,15 +464,15 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
       {/* 에러 이력 탭 */}
       {activeTab === 'errors' && (
         <div className="flex-1 overflow-auto p-4 space-y-4 min-h-0">
-          {errorLogs.length === 0 ? (
+          {errors.length === 0 ? (
             <div className="text-center py-12 text-slate-500">
               <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>기록된 에러가 없습니다.</p>
             </div>
           ) : (
-            errorLogs.map((error) => (
+            errors.map((error: any, index) => (
               <div
-                key={error.id}
+                key={index}
                 className={`bg-white dark:bg-slate-800 rounded-lg shadow overflow-hidden ${
                   error.solution ? 'border-l-4 border-green-500' : 'border-l-4 border-red-500'
                 }`}
@@ -474,34 +485,9 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
                       <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
                     )}
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs rounded font-mono">
-                          {error.errorType}
-                        </span>
-                        <span className="text-xs text-slate-500">
-                          {new Date(error.createdAt).toLocaleString()}
-                        </span>
-                      </div>
                       <p className="text-sm text-slate-900 dark:text-white font-medium">
-                        {error.errorMessage}
+                        {error.error}
                       </p>
-                      {error.relatedFile && (
-                        <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                          <FileCode className="w-3 h-3" />
-                          {error.relatedFile}
-                          {error.relatedLine && `:${error.relatedLine}`}
-                        </p>
-                      )}
-                      {error.stackTrace && (
-                        <details className="mt-2">
-                          <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">
-                            스택 트레이스 보기
-                          </summary>
-                          <pre className="mt-2 p-2 bg-slate-900 text-slate-100 rounded text-xs overflow-auto max-h-40">
-                            <code>{error.stackTrace}</code>
-                          </pre>
-                        </details>
-                      )}
                       {error.solution && (
                         <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
                           <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">
@@ -510,11 +496,6 @@ export default function SessionView({ session, onBack }: SessionViewProps) {
                           <p className="text-sm text-green-700 dark:text-green-300">
                             {error.solution}
                           </p>
-                          {error.solvedAt && (
-                            <p className="text-xs text-green-600 dark:text-green-400 mt-2">
-                              해결일: {new Date(error.solvedAt).toLocaleString()}
-                            </p>
-                          )}
                         </div>
                       )}
                     </div>

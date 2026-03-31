@@ -27,6 +27,11 @@ export interface Session {
     filesModified?: string[];
     pendingTasks?: string[];
   };
+  // CLI에서 저장한 데이터
+  tasks?: string[];
+  codeChanges?: Array<{ file: string; change: string }>;
+  errors?: Array<{ error: string; solution: string }>;
+  decisions?: string[];
 }
 
 export interface Project {
