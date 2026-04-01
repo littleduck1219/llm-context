@@ -38,12 +38,17 @@ export async function GET(request: NextRequest) {
       }
 
       const parsed = parseCloudContext(content);
-      // 세션 ID 형식: "2026-04-01-0" (date-index)
-      const sessionIndex = id.includes('-') ? parseInt(id.split('-').pop() || '0') : 0;
-      const sessionDate = id.includes('-') ? id.substring(0, 10) : id;
-      const session = parsed.sessions.find((s, idx) =>
-        s.date === sessionDate && idx === sessionIndex
-      );
+
+      // 세션 ID 형식: "session-0", "session-1" 등
+      let sessionIndex = 0;
+      if (id.startsWith('session-')) {
+        sessionIndex = parseInt(id.replace('session-', '')) || 0;
+      } else {
+        // 기존 형식 호환: "2026-04-01-0" (date-index)
+        sessionIndex = id.includes('-') ? parseInt(id.split('-').pop() || '0') : 0;
+      }
+
+      const session = parsed.sessions[sessionIndex];
 
       if (!session) {
         return NextResponse.json({ error: 'Session not found' }, { status: 404 });
@@ -86,14 +91,19 @@ export async function GET(request: NextRequest) {
       const parsed = parseCloudContext(content);
 
       const sessions = parsed.sessions.map((s, index) => ({
-        id: `${s.date}-${index}`,
+        id: `session-${index}`,  // 단순한 ID 사용
         projectId,
         title: s.title,
         createdAt: new Date(s.date),
         updatedAt: new Date(s.date),
         summary: '',
         tags: [],
-        messages: []
+        messages: [],
+        // 세션 데이터 포함
+        tasks: s.tasks || [],
+        codeChanges: s.codeChanges || [],
+        errors: s.errors || [],
+        decisions: s.decisions || []
       }));
 
       return NextResponse.json(sessions);

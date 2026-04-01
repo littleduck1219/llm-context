@@ -113,24 +113,50 @@ export function parseCloudContext(content: string): { projectName: string; sessi
 
   for (const line of lines) {
     // 프로젝트 이름
-    if (line.startsWith('# Project:')) {
-      result.projectName = line.replace('# Project:', '').trim();
+    if (line.startsWith('# Project:') || line.startsWith('# ')) {
+      const name = line.replace(/^#\s*/, '').replace(' - 개발 컨텍스트', '').trim();
+      if (!result.projectName && !name.includes('Session')) {
+        result.projectName = name;
+      }
       continue;
     }
 
-    // 세션 시작 (최우선 체크)
+    // 세션 시작 (새 형식: ## Session: 날짜 시간)
     if (line.startsWith('## Session:')) {
-      inSummary = false; // 요약 섹션 종료
+      inSummary = false;
       if (currentSession) result.sessions.push(currentSession);
-      const match = line.match(/## Session:\s*(.+?)\s*\[(.+?)\]/);
-      currentSession = {
-        date: match?.[2] || new Date().toISOString().split('T')[0],
-        title: match?.[1].trim() || 'Untitled',
-        tasks: [],
-        codeChanges: [],
-        errors: [],
-        decisions: []
-      };
+
+      // 새 형식: "## Session: 2026. 4. 2. 오전 12:14"
+      const sessionContent = line.replace('## Session:', '').trim();
+
+      // 날짜/시간 형식 파싱 (2026. 4. 2. 오전 12:14 또는 2026. 4. 2.)
+      const dateMatch = sessionContent.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.?\s*(오전|오후)?\s*(\d{1,2}):(\d{1,2})?$/);
+      if (dateMatch) {
+        const year = parseInt(dateMatch[1]);
+        const month = parseInt(dateMatch[2]);
+        const day = parseInt(dateMatch[3]);
+        // ISO 형식 날짜 생성 (YYYY-MM-DD)
+        const isoDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        currentSession = {
+          date: isoDate,
+          title: sessionContent, // 전체 문자열을 제목으로
+          tasks: [],
+          codeChanges: [],
+          errors: [],
+          decisions: []
+        };
+      } else {
+        // 기존 형식: "## Session: title [date]"
+        const match = sessionContent.match(/(.+?)\s*\[(.+?)\]$/);
+        currentSession = {
+          date: match?.[2] || new Date().toISOString().split('T')[0],
+          title: match?.[1].trim() || sessionContent,
+          tasks: [],
+          codeChanges: [],
+          errors: [],
+          decisions: []
+        };
+      }
       currentSection = 'session';
       continue;
     }
@@ -149,9 +175,9 @@ export function parseCloudContext(content: string): { projectName: string; sessi
 
     // 요약 섹션 내용 처리
     if (inSummary) {
-      if (line.startsWith('> ')) continue; // 자동 생성된 요약 문구 건너뛰기
-      if (line.startsWith('마지막 업데이트:')) continue; // 업데이트 시간 건너뛰기
-      if (line.startsWith('---')) continue; // 구분자 건너뛰기
+      if (line.startsWith('> ')) continue;
+      if (line.startsWith('마지막 업데이트:')) continue;
+      if (line.startsWith('---')) continue;
       if (line.trim()) {
         result.summary += line + '\n';
       }
@@ -159,11 +185,11 @@ export function parseCloudContext(content: string): { projectName: string; sessi
     }
 
     // 세션 내 섹션 변경
-    if (line.startsWith('### Tasks')) {
+    if (line.startsWith('### 오늘 커밋') || line.startsWith('### Tasks')) {
       currentSection = 'tasks';
       continue;
     }
-    if (line.startsWith('### Code Changes')) {
+    if (line.startsWith('### 변경된 파일') || line.startsWith('### Code Changes')) {
       currentSection = 'code';
       continue;
     }
@@ -175,12 +201,25 @@ export function parseCloudContext(content: string): { projectName: string; sessi
       currentSection = 'decisions';
       continue;
     }
+    if (line.startsWith('### 상태')) {
+      currentSection = 'status';
+      continue;
+    }
 
     // 아이템 파싱
     if (line.startsWith('- ') && currentSession) {
       const item = line.slice(2);
-      if (currentSection === 'tasks') currentSession.tasks!.push(item);
-      else if (currentSection === 'code') {
+
+      // 새 형식: "- filename (수정)" 또는 기존 형식: "- file: change"
+      const statusMatch = item.match(/(.+?)\s*\((.+?)\)$/);
+      if (statusMatch && currentSection === 'code') {
+        currentSession.codeChanges!.push({
+          file: statusMatch[1].trim(),
+          change: statusMatch[2]
+        });
+      } else if (currentSection === 'tasks') {
+        currentSession.tasks!.push(item);
+      } else if (currentSection === 'code') {
         const [file, ...rest] = item.split(': ');
         currentSession.codeChanges!.push({ file: file || '', change: rest.join(': ') });
       } else if (currentSection === 'errors') {
@@ -193,8 +232,19 @@ export function parseCloudContext(content: string): { projectName: string; sessi
   }
   if (currentSession) result.sessions.push(currentSession);
 
-  // 요약 trim
   result.summary = result.summary.trim();
+
+  // 디버그: 파싱 결과 로그
+  console.log('=== parseCloudContext RESULT ===');
+  console.log('Project:', result.projectName);
+  console.log('Sessions count:', result.sessions.length);
+  result.sessions.forEach((s, i) => {
+    console.log(`Session ${i}:`, s.title);
+    console.log(`  tasks:`, s.tasks);
+    console.log(`  codeChanges:`, s.codeChanges);
+    console.log(`  errors:`, s.errors);
+    console.log(`  decisions:`, s.decisions);
+  });
 
   return result;
 }
