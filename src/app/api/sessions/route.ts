@@ -38,14 +38,19 @@ export async function GET(request: NextRequest) {
       }
 
       const parsed = parseCloudContext(content);
-      const session = parsed.sessions.find(s => s.date === id || s.title === id);
+      // 세션 ID 형식: "2026-04-01-0" (date-index)
+      const sessionIndex = id.includes('-') ? parseInt(id.split('-').pop() || '0') : 0;
+      const sessionDate = id.includes('-') ? id.substring(0, 10) : id;
+      const session = parsed.sessions.find((s, idx) =>
+        s.date === sessionDate && idx === sessionIndex
+      );
 
       if (!session) {
         return NextResponse.json({ error: 'Session not found' }, { status: 404 });
       }
 
       return NextResponse.json({
-        id: session.date,
+        id: id,  // 요청받은 ID 그대로 사용
         projectId,
         title: session.title,
         createdAt: new Date(session.date),

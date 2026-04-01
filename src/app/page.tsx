@@ -12,6 +12,7 @@ export default function Home() {
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [view, setView] = useState<'projects' | 'session' | 'memory'>('projects');
   const [loading, setLoading] = useState(true);
+  const [loadingSession, setLoadingSession] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -105,6 +106,7 @@ export default function Home() {
   const handleSelectSession = async (sessionId: string) => {
     if (!selectedProject) return;
 
+    setLoadingSession(true);
     try {
       const res = await fetch(`/api/sessions?id=${sessionId}&projectId=${encodeURIComponent(selectedProject.id)}`);
       const session = await res.json();
@@ -128,6 +130,8 @@ export default function Home() {
       setView('session');
     } catch (error) {
       console.error('Failed to load session:', error);
+    } finally {
+      setLoadingSession(false);
     }
   };
 
@@ -174,9 +178,11 @@ export default function Home() {
       <Sidebar
         projects={projects}
         selectedProject={selectedProject}
+        selectedSession={selectedSession}
         onSelectProject={handleSelectProject}
         onCreateProject={handleCreateProject}
         onCreateSession={handleCreateSession}
+        onSelectSession={handleSelectSession}
       />
 
       {/* 메인 컨텐츠 */}
@@ -204,7 +210,14 @@ export default function Home() {
         </header>
 
         {/* 컨텐츠 영역 */}
-        {view === 'session' && selectedSession ? (
+        {loadingSession ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
+              <p className="text-slate-500 text-sm">세션 로드 중...</p>
+            </div>
+          </div>
+        ) : view === 'session' && selectedSession ? (
           <SessionView
             session={selectedSession}
             onBack={() => setView('memory')}

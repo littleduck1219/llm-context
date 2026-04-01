@@ -115,26 +115,12 @@ export function parseCloudContext(content: string): { projectName: string; sessi
     // 프로젝트 이름
     if (line.startsWith('# Project:')) {
       result.projectName = line.replace('# Project:', '').trim();
-    }
-    // 요약 섹션
-    else if (line.startsWith('## Summary')) {
-      inSummary = true;
       continue;
     }
-    else if (inSummary && line.startsWith('## ')) {
-      inSummary = false;
-    }
-    else if (inSummary && line.startsWith('> ')) {
-      continue; // 자동 생성된 요약 문구 건너뛰기
-    }
-    else if (inSummary && line.startsWith('마지막 업데이트:')) {
-      continue; // 업데이트 시간 건너뛰기
-    }
-    else if (inSummary && line.trim()) {
-      result.summary += line + '\n';
-    }
-    // 세션 시작
-    else if (line.startsWith('## Session:')) {
+
+    // 세션 시작 (최우선 체크)
+    if (line.startsWith('## Session:')) {
+      inSummary = false; // 요약 섹션 종료
       if (currentSession) result.sessions.push(currentSession);
       const match = line.match(/## Session:\s*(.+?)\s*\[(.+?)\]/);
       currentSession = {
@@ -146,15 +132,52 @@ export function parseCloudContext(content: string): { projectName: string; sessi
         decisions: []
       };
       currentSection = 'session';
-      inSummary = false;
+      continue;
     }
-    // 섹션 변경
-    else if (line.startsWith('### Tasks')) currentSection = 'tasks';
-    else if (line.startsWith('### Code Changes')) currentSection = 'code';
-    else if (line.startsWith('### Errors')) currentSection = 'errors';
-    else if (line.startsWith('### Decisions')) currentSection = 'decisions';
+
+    // 요약 섹션
+    if (line.startsWith('## Summary')) {
+      inSummary = true;
+      continue;
+    }
+
+    // 다른 ## 섹션이 나오면 요약 종료
+    if (inSummary && line.startsWith('## ') && !line.startsWith('## Session:')) {
+      inSummary = false;
+      continue;
+    }
+
+    // 요약 섹션 내용 처리
+    if (inSummary) {
+      if (line.startsWith('> ')) continue; // 자동 생성된 요약 문구 건너뛰기
+      if (line.startsWith('마지막 업데이트:')) continue; // 업데이트 시간 건너뛰기
+      if (line.startsWith('---')) continue; // 구분자 건너뛰기
+      if (line.trim()) {
+        result.summary += line + '\n';
+      }
+      continue;
+    }
+
+    // 세션 내 섹션 변경
+    if (line.startsWith('### Tasks')) {
+      currentSection = 'tasks';
+      continue;
+    }
+    if (line.startsWith('### Code Changes')) {
+      currentSection = 'code';
+      continue;
+    }
+    if (line.startsWith('### Errors')) {
+      currentSection = 'errors';
+      continue;
+    }
+    if (line.startsWith('### Decisions')) {
+      currentSection = 'decisions';
+      continue;
+    }
+
     // 아이템 파싱
-    else if (line.startsWith('- ') && currentSession) {
+    if (line.startsWith('- ') && currentSession) {
       const item = line.slice(2);
       if (currentSection === 'tasks') currentSession.tasks!.push(item);
       else if (currentSection === 'code') {
@@ -229,4 +252,61 @@ export async function syncProjectContent(gistId: string, token: string): Promise
   const content = await getGist(token, gistId);
   fs.writeFileSync(getCachePath(gistId), content);
   return content;
+}
+
+// 모든 Gist 프로젝트 동기화 (다른 컴퓨터에서 생성한 프로젝트 포함)
+export async function syncAllGistProjects(token: string): Promise<GistConfig> {
+  const cfg = loadGistConfig();
+
+  // 사용자의 모든 gist 목록 가져오기
+  const gists = await githubRequest('GET', '/gists?per_page=100', token);
+
+  // LLM Context 프로젝트인 gist 찾기
+  for (const gist of gists) {
+    // "LLM Context:" 로 시작하는 description을 가진 gist 찾기
+    if (gist.description?.startsWith('LLM Context:')) {
+      const projectName = gist.description.replace('LLM Context:', '').trim();
+      const gistId = gist.id;
+
+      // 이미 등록된 프로젝트인지 확인
+      const existingProject = Object.values(cfg.projects).find(p => p.gistId === gistId);
+      if (existingProject) {
+        // 기존 프로젝트의 캐시 업데이트
+        try {
+          await syncProjectContent(gistId, token);
+          const projectPath = Object.keys(cfg.projects).find(k => cfg.projects[k].gistId === gistId);
+          if (projectPath) {
+            cfg.projects[projectPath].lastSync = new Date().toISOString();
+          }
+        } catch {
+          // 동기화 실패 시 무시
+        }
+      } else {
+        // 새 프로젝트 발견 - config에 추가
+        // 경로는 gist ID를 임시로 사용 (사용자가 나중에 수정 가능)
+        const tempPath = `gist://${gistId}`;
+
+        // gist 내용 가져와서 캐시에 저장
+        try {
+          const content = await syncProjectContent(gistId, token);
+          const parsed = parseCloudContext(content);
+
+          // 프로젝트 이름으로 경로 생성 (또는 사용자가 지정한 경로)
+          // 여기서는 프로젝트 이름을 키로 사용
+          const projectKey = parsed.projectName || projectName;
+
+          cfg.projects[projectKey] = {
+            name: projectKey,
+            gistId,
+            lastSync: new Date().toISOString()
+          };
+        } catch {
+          // 동기화 실패 시 무시
+        }
+      }
+    }
+  }
+
+  saveGistConfig(cfg);
+  return cfg;
 }

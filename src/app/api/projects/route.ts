@@ -5,25 +5,34 @@ import {
   getProjects,
   createGist,
   generateCloudMarkdown,
-  syncProjectContent
+  syncProjectContent,
+  syncAllGistProjects
 } from '@/lib/gist';
 
 // 프로젝트 목록 조회
 export async function GET(request: NextRequest) {
   try {
-    const cfg = loadGistConfig();
+    let cfg = loadGistConfig();
 
-    // 토큰이 있으면 모든 프로젝트 동기화
+    // 토큰이 있으면 모든 gist에서 프로젝트 동기화 (다른 컴퓨터에서 생성한 것도 포함)
     if (cfg.githubToken) {
-      for (const [projectPath, project] of Object.entries(cfg.projects)) {
-        try {
-          await syncProjectContent(project.gistId, cfg.githubToken);
-          cfg.projects[projectPath].lastSync = new Date().toISOString();
-        } catch {
-          // 동기화 실패해도 캐시 데이터 사용
+      try {
+        cfg = await syncAllGistProjects(cfg.githubToken);
+      } catch (error) {
+        console.error('Failed to sync all gists:', error);
+        // 실패해도 기존 프로젝트들의 캐시 업데이트 시도
+        if (cfg.githubToken) {
+          for (const [projectPath, project] of Object.entries(cfg.projects)) {
+            try {
+              await syncProjectContent(project.gistId, cfg.githubToken);
+              cfg.projects[projectPath].lastSync = new Date().toISOString();
+            } catch {
+              // 동기화 실패해도 캐시 데이터 사용
+            }
+          }
+          saveGistConfig(cfg);
         }
       }
-      saveGistConfig(cfg);
     }
 
     const projects = getProjects();

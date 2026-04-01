@@ -5,6 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import https from 'https';
+import { execSync } from 'child_process';
+import * as readline from 'readline';
 
 const CONFIG_DIR = path.join(os.homedir(), '.llm-context-manager');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -37,6 +39,71 @@ function saveGistConfig(cfg: GistConfig) {
 
 function getCachePath(gistId: string) {
   return path.join(CACHE_DIR, `${gistId}.md`);
+}
+
+// 대화형 입력 유틸리티
+function question(rl: readline.ReadLine, query: string): Promise<string> {
+  return new Promise(resolve => rl.question(query, resolve));
+}
+
+async function promptForSessionContent(): Promise<{
+  title: string;
+  tasks: string[];
+  changes: string[];
+  errors: string[];
+  decisions: string[];
+}> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  console.log('\n📝 세션 내용 입력 (Enter로 건너뛰기)\n');
+
+  const title = await question(rl, '세션 제목: ');
+
+  console.log('\n작업 목록 입력 (빈 줄 입력 시 종료):');
+  const tasks: string[] = [];
+  let taskNum = 1;
+  while (true) {
+    const task = await question(rl, `  작업 ${taskNum}: `);
+    if (!task.trim()) break;
+    tasks.push(task.trim());
+    taskNum++;
+  }
+
+  console.log('\n코드 변경 사항 (형식: 파일:설명, 빈 줄 입력 시 종료):');
+  const changes: string[] = [];
+  let changeNum = 1;
+  while (true) {
+    const change = await question(rl, `  변경 ${changeNum}: `);
+    if (!change.trim()) break;
+    changes.push(change.trim());
+    changeNum++;
+  }
+
+  console.log('\n에러 및 해결 (형식: 에러→해결, 빈 줄 입력 시 종료):');
+  const errors: string[] = [];
+  let errorNum = 1;
+  while (true) {
+    const error = await question(rl, `  에러 ${errorNum}: `);
+    if (!error.trim()) break;
+    errors.push(error.trim());
+    errorNum++;
+  }
+
+  console.log('\n기술적 결정 사항 (빈 줄 입력 시 종료):');
+  const decisions: string[] = [];
+  let decisionNum = 1;
+  while (true) {
+    const decision = await question(rl, `  결정 ${decisionNum}: `);
+    if (!decision.trim()) break;
+    decisions.push(decision.trim());
+    decisionNum++;
+  }
+
+  rl.close();
+  return { title: title.trim(), tasks, changes, errors, decisions };
 }
 
 async function githubRequest(method: string, apiPath: string, token: string, body?: any): Promise<any> {
@@ -152,6 +219,67 @@ function generateCloudMarkdown(projectName: string, sessions: CloudSession[]): s
     }
   }
   return md;
+}
+
+// Git 정보 자동 수집
+function collectGitInfo(projectPath: string): {
+  commits: string[];
+  changedFiles: string[];
+  diffStat: string;
+} {
+  const result = { commits: [] as string[], changedFiles: [] as string[], diffStat: '' };
+
+  try {
+    // 프로젝트 경로가 git 저장소인지 확인
+    const gitDir = path.join(projectPath, '.git');
+    if (!fs.existsSync(gitDir)) {
+      return result;
+    }
+
+    // 오늘 커밋 수집
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const commits = execSync(
+        `git log --oneline --since="${today} 00:00:00" --until="${today} 23:59:59"`,
+        { cwd: projectPath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+      ).trim();
+      if (commits) {
+        result.commits = commits.split('\n').map(c => c.trim()).filter(Boolean);
+      }
+    } catch {
+      // 커밋 없음
+    }
+
+    // 변경된 파일들
+    try {
+      const status = execSync(
+        'git status --short',
+        { cwd: projectPath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+      ).trim();
+      if (status) {
+        result.changedFiles = status.split('\n').map(f => f.trim()).filter(Boolean);
+      }
+    } catch {
+      // 변경 없음
+    }
+
+    // diff 통계
+    try {
+      const diff = execSync(
+        'git diff --stat HEAD~1 2>/dev/null || git diff --stat',
+        { cwd: projectPath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+      ).trim();
+      if (diff) {
+        result.diffStat = diff;
+      }
+    } catch {
+      // diff 없음
+    }
+  } catch (error) {
+    // git 명령 실패 - 무시
+  }
+
+  return result;
 }
 
 const program = new Command();
@@ -429,7 +557,7 @@ program.command('start [projectPath] [projectName]')
   });
 
 // ============================================
-// end 명령어 - 세션 종료 + 자동 저장
+// end 명령어 - 세션 종료 + 자동 저장 (대화형 개선)
 // ============================================
 program.command('end [title]')
   .description('세션 종료 - 작업 내용 저장')
@@ -438,6 +566,7 @@ program.command('end [title]')
   .option('-e, --errors <errors...>', '에러 (형식: error→solution)')
   .option('-d, --decisions <decisions...>', '결정사항')
   .option('--title <title>', '세션 제목')
+  .option('-i, --interactive', '대화형 모드로 실행')
   .action(async (titleArg, options) => {
     const cfg = loadGistConfig();
     const sessionFile = path.join(CONFIG_DIR, '.current-session');
@@ -463,28 +592,90 @@ program.command('end [title]')
       return;
     }
 
+    // 대화형 모드 또는 옵션이 없을 때 대화형 입력
+    let tasks = options.tasks || [];
+    let codeChanges = (options.changes || []).map((c: string) => {
+      const [file, ...rest] = c.split(':');
+      return { file, change: rest.join(':') };
+    });
+    let errors = (options.errors || []).map((e: string) => {
+      const [error, solution] = e.split('→');
+      return { error, solution: solution || '' };
+    });
+    let decisions = options.decisions || [];
+    let sessionTitle = options.title || titleArg || '';
+
+    // 옵션이 없고 stdin이 TTY면 대화형 모드
+    const hasOptions = options.tasks || options.changes || options.errors || options.decisions || options.title || titleArg;
+    if (!hasOptions && process.stdin.isTTY) {
+      console.log('\n📝 세션 종료 - 작업 내용을 입력하세요\n');
+      try {
+        const input = await promptForSessionContent();
+        sessionTitle = input.title;
+        tasks = input.tasks;
+        codeChanges = input.changes.map(c => {
+          const [file, ...rest] = c.split(':');
+          return { file, change: rest.join(':') };
+        });
+        errors = input.errors.map(e => {
+          const [error, solution] = e.split('→');
+          return { error, solution: solution || '' };
+        });
+        decisions = input.decisions;
+      } catch (e) {
+        console.log('입력이 취소되었습니다.');
+        return;
+      }
+    }
+
     try {
       const content = await getGist(cfg.githubToken, project.gistId);
       const parsed = parseCloudContext(content);
 
-      const sessionTitle = options.title || titleArg || `개발 세션 ${parsed.sessions.length + 1}`;
+      if (!sessionTitle) {
+        sessionTitle = `개발 세션 ${parsed.sessions.length + 1}`;
+      }
+
+      // Git 정보 자동 수집
+      const gitInfo = collectGitInfo(projectPath);
+      const autoTasks: string[] = [];
+      const autoChanges: Array<{ file: string; change: string }> = [];
+
+      // 커밋을 작업으로 변환
+      if (gitInfo.commits.length > 0) {
+        gitInfo.commits.forEach(c => {
+          const msg = c.replace(/^[a-f0-9]+\s/, '').trim();
+          autoTasks.push(`커밋: ${msg}`);
+        });
+      }
+
+      // 변경된 파일들을 코드 변경에 추가
+      if (gitInfo.changedFiles.length > 0) {
+        gitInfo.changedFiles.forEach(f => {
+          const status = f.substring(0, 2).trim();
+          const fileName = f.substring(3).trim();
+          const statusText = status === 'M' ? '수정' : status === 'A' ? '추가' : status === 'D' ? '삭제' : '변경';
+          autoChanges.push({ file: fileName, change: statusText });
+        });
+      }
+
+      // 사용자가 입력한 작업과 병합 (중복 제거)
+      const allTasks = [...tasks, ...autoTasks.filter(t => !tasks.some(ut => ut === t))];
+      const allCodeChanges = [
+        ...codeChanges,
+        ...autoChanges.filter(ac => !codeChanges.some(cc => cc.file === ac.file))
+      ];
 
       const newSession: CloudSession = {
         date: new Date().toISOString().split('T')[0],
         title: sessionTitle,
-        tasks: options.tasks || [],
-        codeChanges: (options.changes || []).map((c: string) => {
-          const [file, ...rest] = c.split(':');
-          return { file, change: rest.join(':') };
-        }),
-        errors: (options.errors || []).map((e: string) => {
-          const [error, solution] = e.split('→');
-          return { error, solution: solution || '' };
-        }),
-        decisions: options.decisions || []
+        tasks: allTasks,
+        codeChanges: allCodeChanges,
+        errors,
+        decisions
       };
 
-      // 세션 저장 (빈 세션도 제목만으로 저장 가능)
+      // 세션 저장
       parsed.sessions.push(newSession);
 
       const newContent = generateCloudMarkdown(project.name, parsed.sessions);
@@ -499,12 +690,12 @@ program.command('end [title]')
         fs.unlinkSync(sessionFile);
       }
 
-      console.log(`✅ 세션 저장 완료: ${sessionTitle}`);
-      // 작업 내용이 없으면 안내 메시지 추가
-      const hasContent = newSession.tasks?.length || newSession.codeChanges?.length || newSession.errors?.length || newSession.decisions?.length;
-      if (!hasContent) {
-        console.log(`💡 팁: 다음부터 -t "작업" -c "파일:변경" 옵션으로 상세 내용을 함께 저장하세요.`);
-      }
+      console.log(`\n✅ 세션 저장 완료: ${sessionTitle}`);
+      // 저장된 내용 요약
+      if (allTasks.length) console.log(`📋 작업: ${allTasks.length}개`);
+      if (allCodeChanges.length) console.log(`📝 코드 변경: ${allCodeChanges.length}개`);
+      if (errors.length) console.log(`⚠️ 에러 해결: ${errors.length}개`);
+      if (decisions.length) console.log(`💡 결정 사항: ${decisions.length}개`);
       console.log(`📊 총 ${parsed.sessions.length}개 세션`);
       console.log(`🔗 https://gist.github.com/${project.gistId}`);
     } catch (e) {
